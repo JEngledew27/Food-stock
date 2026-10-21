@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2f6f4f">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>Pantry</title>
+<style>
+:root{--bg:#f6f7f4;--card:#fff;--text:#1c2420;--mute:#6a756e;--accent:#2f6f4f;--danger:#b3412f;--line:#e2e6e0}
+@media (prefers-color-scheme:dark){:root{--bg:#141815;--card:#1d231f;--text:#eaf0ec;--mute:#93a099;--accent:#5cb98a;--danger:#e0735f;--line:#2c352f}}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--text);padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+header{position:sticky;top:0;background:var(--bg);padding:12px 16px;border-bottom:1px solid var(--line);z-index:5}
+h1{margin:0 0 10px;font-size:20px}
+.row{display:flex;gap:8px}
+button,input{font:inherit;border-radius:10px;border:1px solid var(--line);padding:10px 12px;background:var(--card);color:var(--text)}
+input{flex:1;min-width:0}
+button{cursor:pointer}
+.seg button{flex:1}
+.seg button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.seg button.on.rem{background:var(--danger);border-color:var(--danger)}
+.primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+main{padding:12px 16px 80px;max-width:640px;margin:auto}
+.item{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px}
+.item .n{flex:1;min-width:0}
+.item b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item small{color:var(--mute)}
+.qty{display:flex;align-items:center;gap:8px}
+.qty button{width:36px;height:36px;padding:0}
+.soon{color:var(--danger)}
+dialog{border:none;border-radius:16px;background:var(--card);color:var(--text);width:min(92vw,420px);padding:16px}
+dialog::backdrop{background:#0008}
+label{display:block;margin:10px 0 4px;color:var(--mute);font-size:14px}
+dialog input{width:100%}
+video,#reader{width:100%;border-radius:12px;background:#000;min-height:200px}
+#toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:20px;opacity:0;transition:.25s;pointer-events:none;max-width:90vw;text-align:center;z-index:20}
+#toast.show{opacity:1}
+.empty{color:var(--mute);text-align:center;margin-top:40px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🥫 Food Stock</h1>
+  <div class="row seg" style="margin-bottom:8px">
+    <button id="mAdd" class="on">＋ Add stock</button>
+    <button id="mRem" class="rem">－ Remove stock</button>
+  </div>
+  <div class="row">
+    <button id="scanBtn" class="primary">📷 Scan</button>
+    <input id="manual" inputmode="numeric" placeholder="Type barcode">
+    <button id="go">Go</button>
+  </div>
+</header>
+<main>
+  <input id="q" placeholder="Search stock…" style="width:100%;margin-bottom:12px">
+  <div id="list"></div>
+  <div class="row" style="margin-top:16px">
+    <button id="syncBtn">Sync SharePoint list</button>
+    <button id="exportBtn">Export CSV</button>
+  </div>
+</main>
+
+<dialog id="scanDlg">
+  <video id="vid" playsinline muted></video>
+  <div id="reader" hidden></div>
+  <p id="scanMsg" style="color:var(--mute);margin:8px 0">Point at a barcode…</p>
+  <button id="scanClose" style="width:100%">Close</button>
+</dialog>
+
+<dialog id="itemDlg">
+  <h3 style="margin:0 0 4px" id="itemTitle">New item</h3>
+  <small id="itemSrc" style="color:var(--mute)"></small>
+  <label>Name</label><input id="fName">
+  <label>Brand</label><input id="fBrand">
+  <label>Quantity to add</label><input id="fQty" type="number" min="1" value="1">
+  <label>Best before (optional)</label><input id="fExp" type="date">
+  <div class="row" style="margin-top:14px">
+    <button id="itemCancel">Cancel</button>
+    <button id="itemSave" class="primary">Save</button>
+  </div>
+</dialog>
+<div id="toast"></div>
+
+<script>
+/* ---------- CONFIG: SharePoint fallback (optional) ----------
+   Leave msalClientId empty to disable. See README notes in chat.
+   graphFileBase example (SharePoint site document library file):
+   "https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com:/sites/Home:/drive/root:/Documents/Food.xlsx:"
+   tableName = name of the Excel Table (Insert > Table) holding Barcode / Name / Brand columns. */
+const CONFIG = { msalClientId:"", tenantId:"", graphFileBase:"", tableName:"" };
+
+const $ = s => document.querySelector(s);
+const load = k => JSON.parse(localStorage.getItem(k) || "{}");
+const save = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+let mode = "add";
+
+function toast(msg){const t=$("#toast");t.textContent=msg;t.classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove("show"),2200)}
+function buzz(){navigator.vibrate&&navigator.vibrate(60)}
+
+/* ---------- Mode toggle ---------- */
+$("#mAdd").onclick = () => setMode("add");
+$("#mRem").onclick = () => setMode("remove");
+function setMode(m){mode=m;$("#mAdd").classList.toggle("on",m==="add");$("#mRem").classList.toggle("on",m==="remove")}
+
+/* ---------- Stock rendering ---------- */
+function render(){
+  const stock = load("stock"), term = $("#q").value.toLowerCase();
+  const items = Object.entries(stock).filter(([c,i]) => (i.name+" "+i.brand+" "+c).toLowerCase().includes(term))
+    .sort((a,b)=>a[1].name.localeCompare(b[1].name));
+  $("#list").innerHTML = items.length ? "" : '<div class="empty">No stock yet. Scan something to add it.</div>';
+  for (const [code,i] of items){
+    const soon = i.expiry && (new Date(i.expiry) - Date.now()) < 3*864e5;
+    const el = document.createElement("div"); el.className="item";
+    el.innerHTML = `<div class="n"><b></b><small></small></div>
+      <div class="qty"><button data-d="-1">−</button><b>${i.qty}</b><button data-d="1">＋</button></div>`;
+    el.querySelector("b").textContent = i.name;
+    const s = el.querySelector("small");
+    s.textContent = [i.brand, i.expiry && "BB " + i.expiry].filter(Boolean).join(" · ");
+    if (soon) s.classList.add("soon");
+    el.querySelectorAll("[data-d]").forEach(b => b.onclick = () => adjust(code, +b.dataset.d));
+    $("#list").append(el);
+  }
+}
+$("#q").oninput = render;
+
+function adjust(code, d){
+  const stock = load("stock"), i = stock[code]; if(!i) return;
+  i.qty += d;
+  if (i.qty <= 0) { delete stock[code]; toast(`${i.name} used up`); }
+  else toast(`${i.name}: ${i.qty}`);
+  save("stock", stock); render();
+}
+
+/* ---------- Barcode handling ---------- */
+async function handleCode(code){
+  code = String(code).trim(); if(!code) return;
+  const stock = load("stock");
+  if (mode === "remove"){
+    if (stock[code]) { adjust(code, -1); buzz(); }
+    else toast("Not in stock: " + code);
+    return;
+  }
+  if (stock[code]) { adjust(code, 1); buzz(); return; }
+  toast("Looking up " + code + "…");
+  const found = await lookup(code);
+  openItemDialog(code, found);
+}
+$("#go").onclick = () => { handleCode($("#manual").value); $("#manual").value=""; };
+$("#manual").onkeydown = e => { if(e.key==="Enter") $("#go").click(); };
+
+/* ---------- Lookups: remembered -> Open Food Facts -> SharePoint ---------- */
+async function lookup(code){
+  const known = load("known"); // products we've seen before
+  if (known[code]) return {...known[code], src:"Saved earlier"};
+  try {
+    const r = await fetch(`https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=product_name,brands,quantity`);
+    const j = await r.json();
+    if (j.status === 1 && j.product?.product_name){
+      const p = j.product;
+      return { name: p.product_name + (p.quantity ? " " + p.quantity : ""), brand:(p.brands||"").split(",")[0], src:"Open Food Facts" };
+    }
+  } catch(e){}
+  const sp = load("sp")[code];
+  if (sp) return {...sp, src:"SharePoint list"};
+  return null;
+}
+
+/* ---------- Item dialog ---------- */
+let pending = null;
+function openItemDialog(code, f){
+  pending = code;
+  $("#itemTitle").textContent = code;
+  $("#itemSrc").textContent = f ? "Found via " + f.src : "Not found – enter the details";
+  $("#fName").value = f?.name || ""; $("#fBrand").value = f?.brand || "";
+  $("#fQty").value = 1; $("#fExp").value = "";
+  $("#itemDlg").showModal();
+}
+$("#itemCancel").onclick = () => $("#itemDlg").close();
+$("#itemSave").onclick = () => {
+  const name = $("#fName").value.trim(); if(!name) return $("#fName").focus();
+  const brand = $("#fBrand").value.trim();
+  const stock = load("stock"), known = load("known");
+  stock[pending] = { name, brand, qty: Math.max(1, +$("#fQty").value||1), expiry: $("#fExp").value };
+  known[pending] = { name, brand };
+  save("stock", stock); save("known", known);
+  $("#itemDlg").close(); render(); toast("Added " + name);
+};
+
+/* ---------- Scanner ---------- */
+let stream, timer, h5, lastCode = "", lastAt = 0;
+function onDecoded(code){
+  if (code === lastCode && Date.now() - lastAt < 3000) return; // debounce repeats
+  lastCode = code; lastAt = Date.now();
+  handleCode(code);
+  if (!load("stock")[code] && mode === "add") stopScan(); // unknown item -> dialog takes over
+}
+async function startScan(){
+  $("#scanDlg").showModal();
+  try {
+    if ("BarcodeDetector" in window){
+      $("#vid").hidden = false; $("#reader").hidden = true;
+      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+      $("#vid").srcObject = stream; await $("#vid").play();
+      const det = new BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e"]});
+      timer = setInterval(async () => {
+        try { const r = await det.detect($("#vid")); if (r.length) onDecoded(r[0].rawValue); } catch(e){}
+      }, 250);
+    } else { // fallback (e.g. iPhone Safari)
+      $("#vid").hidden = true; $("#reader").hidden = false;
+      if (!window.Html5Qrcode) await new Promise((ok, no) => {
+        const s = document.createElement("script");
+        s.src = "https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js";
+        s.onload = ok; s.onerror = no; document.head.append(s);
+      });
+      h5 = new Html5Qrcode("reader");
+      await h5.start({facingMode:"environment"}, {fps:10, qrbox:{width:260,height:140}}, onDecoded);
+    }
+  } catch(e){ $("#scanMsg").textContent = "Camera unavailable – type the barcode instead."; }
+}
+function stopScan(){
+  clearInterval(timer); timer = null;
+  stream?.getTracks().forEach(t => t.stop()); stream = null;
+  if (h5){ h5.stop().catch(()=>{}).finally(()=>{ try{h5.clear()}catch(e){} h5=null; }); }
+  if ($("#scanDlg").open) $("#scanDlg").close();
+}
+$("#scanBtn").onclick = startScan;
+$("#scanClose").onclick = stopScan;
+$("#scanDlg").addEventListener("cancel", stopScan);
+
+/* ---------- SharePoint (Microsoft Graph + MSAL) ---------- */
+async function syncSharePoint(){
+  if (!CONFIG.msalClientId) return toast("SharePoint not configured yet");
+  try {
+    if (!window.msal) await new Promise((ok,no)=>{const s=document.createElement("script");
+      s.src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js";s.onload=ok;s.onerror=no;document.head.append(s)});
+    const app = new msal.PublicClientApplication({auth:{clientId:CONFIG.msalClientId,
+      authority:"https://login.microsoftonline.com/"+CONFIG.tenantId, redirectUri:location.origin+location.pathname},
+      cache:{cacheLocation:"localStorage"}});
+    await app.initialize?.();
+    const scopes = ["Files.Read.All","Sites.Read.All"];
+    let tok;
+    const acct = app.getAllAccounts()[0];
+    try { tok = await app.acquireTokenSilent({scopes, account:acct}); }
+    catch(e){ tok = await app.acquireTokenPopup({scopes}); }
+    const url = `${CONFIG.graphFileBase}/workbook/tables/${encodeURIComponent(CONFIG.tableName)}/range?$select=values`;
+    const r = await fetch(url, {headers:{Authorization:"Bearer "+tok.accessToken}});
+    if (!r.ok) throw new Error(r.status);
+    const [head, ...rows] = (await r.json()).values;
+    const col = w => head.findIndex(h => String(h).toLowerCase().includes(w));
+    const cB = col("barcode"), cN = col("name"), cBr = col("brand");
+    const sp = {};
+    rows.forEach(v => { const c = String(v[cB]||"").trim(); if(c) sp[c] = {name:String(v[cN]||""), brand: cBr>=0?String(v[cBr]||""):""}; });
+    save("sp", sp); toast(`Synced ${Object.keys(sp).length} products`);
+  } catch(e){ toast("SharePoint sync failed (" + (e.message||e) + ")"); }
+}
+$("#syncBtn").onclick = syncSharePoint;
+
+/* ---------- Export ---------- */
+$("#exportBtn").onclick = () => {
+  const rows = [["Barcode","Name","Brand","Qty","Best before"],
+    ...Object.entries(load("stock")).map(([c,i])=>[c,i.name,i.brand,i.qty,i.expiry])];
+  const csv = rows.map(r=>r.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"})); a.download = "pantry.csv"; a.click();
+};
+
+/* ---------- Boot ---------- */
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+render();
+</script>
+</body>
+</html>
