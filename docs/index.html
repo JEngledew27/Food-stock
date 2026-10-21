@@ -9,21 +9,30 @@
 <link rel="apple-touch-icon" href="icon.svg">
 <title>Pantry</title>
 <style>
-:root{--bg:#f6f7f4;--card:#fff;--text:#1c2420;--mute:#6a756e;--accent:#2f6f4f;--danger:#b3412f;--line:#e2e6e0}
-@media (prefers-color-scheme:dark){:root{--bg:#141815;--card:#1d231f;--text:#eaf0ec;--mute:#93a099;--accent:#5cb98a;--danger:#e0735f;--line:#2c352f}}
+/* ===== COLOURS: change these hex codes to restyle the app ===== */
+:root{
+  --accent:#2f6f4f;   /* general accent: header toggle, Save buttons, Home buttons */
+  --scan:#2f6f4f;     /* the Scan button only */
+  --bg:#f6f7f4;--card:#fff;--text:#1c2420;--mute:#6a756e;--danger:#b3412f;--line:#e2e6e0}
+@media (prefers-color-scheme:dark){:root{--accent:#5cb98a;--scan:#5cb98a;--bg:#141815;--card:#1d231f;--text:#eaf0ec;--mute:#93a099;--danger:#e0735f;--line:#2c352f}}
 *{box-sizing:border-box}
 body{margin:0;font:16px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--text);padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
 header{position:sticky;top:0;background:var(--bg);padding:12px 16px;border-bottom:1px solid var(--line);z-index:5}
-h1{margin:0 0 10px;font-size:20px}
+.top{display:flex;align-items:center;gap:10px}
+h1{margin:0;font-size:20px;flex:1}
 .row{display:flex;gap:8px}
-button,input{font:inherit;border-radius:10px;border:1px solid var(--line);padding:10px 12px;background:var(--card);color:var(--text)}
-input{flex:1;min-width:0}
+button,input,select{font:inherit;border-radius:10px;border:1px solid var(--line);padding:10px 12px;background:var(--card);color:var(--text)}
+input,select{flex:1;min-width:0}
 button{cursor:pointer}
 .seg button{flex:1}
 .seg button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 .seg button.on.rem{background:var(--danger);border-color:var(--danger)}
 .primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+.scan{background:var(--scan);color:#fff;border-color:var(--scan);font-weight:600}
 main{padding:12px 16px 80px;max-width:640px;margin:auto}
+.big{display:flex;align-items:center;gap:16px;width:100%;min-height:110px;margin-bottom:14px;padding:18px;font-size:20px;font-weight:600;text-align:left;background:var(--accent);color:#fff;border:none;border-radius:18px}
+.big span{font-size:40px}
+.big small{display:block;font-weight:400;font-size:14px;opacity:.85}
 .item{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px}
 .item .n{flex:1;min-width:0}
 .item b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -39,28 +48,49 @@ video,#reader{width:100%;border-radius:12px;background:#000;min-height:200px}
 #toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:20px;opacity:0;transition:.25s;pointer-events:none;max-width:90vw;text-align:center;z-index:20}
 #toast.show{opacity:1}
 .empty{color:var(--mute);text-align:center;margin-top:40px}
+[hidden]{display:none!important}
 </style>
 </head>
 <body>
 <header>
-  <h1>🥫 Food Stock</h1>
+  <div class="top">
+    <button id="back" hidden>← Home</button>
+    <h1 id="title">Pantry</h1>
+  </div>
+</header>
+
+<main>
+<!-- ============ HOME ============ -->
+<section class="page" id="page-home">
+  <button class="big" data-go="stock"><span>📦</span><div>Add / remove stock<small id="homeStock"></small></div></button>
+  <button class="big" data-go="assign"><span>📍</span><div>Assign unallocated stock<small id="homeUnalloc"></small></div></button>
+  <div class="row" style="margin-top:20px">
+    <button id="syncBtn">Sync SharePoint</button>
+    <button id="exportBtn">Export CSV</button>
+  </div>
+</section>
+
+<!-- ============ ADD / REMOVE ============ -->
+<section class="page" id="page-stock" hidden>
   <div class="row seg" style="margin-bottom:8px">
     <button id="mAdd" class="on">＋ Add stock</button>
     <button id="mRem" class="rem">－ Remove stock</button>
   </div>
+  <label style="margin-top:0">Location</label>
+  <select id="locSel" style="width:100%;margin-bottom:8px"></select>
   <div class="row">
-    <button id="scanBtn" class="primary">📷 Scan</button>
+    <button id="scanBtn" class="scan">📷 Scan</button>
     <input id="manual" inputmode="numeric" placeholder="Type barcode">
     <button id="go">Go</button>
   </div>
-</header>
-<main>
-  <input id="q" placeholder="Search stock…" style="width:100%;margin-bottom:12px">
+  <input id="q" placeholder="Search stock or location…" style="width:100%;margin:12px 0">
   <div id="list"></div>
-  <div class="row" style="margin-top:16px">
-    <button id="syncBtn">Sync SharePoint list</button>
-    <button id="exportBtn">Export CSV</button>
-  </div>
+</section>
+
+<!-- ============ ASSIGN ============ -->
+<section class="page" id="page-assign" hidden>
+  <div id="assignList"></div>
+</section>
 </main>
 
 <dialog id="scanDlg">
@@ -85,75 +115,116 @@ video,#reader{width:100%;border-radius:12px;background:#000;min-height:200px}
 <div id="toast"></div>
 
 <script>
-/* ---------- CONFIG: SharePoint fallback (optional) ----------
-   Leave msalClientId empty to disable. See README notes in chat.
-   graphFileBase example (SharePoint site document library file):
-   "https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com:/sites/Home:/drive/root:/Documents/Food.xlsx:"
-   tableName = name of the Excel Table (Insert > Table) holding Barcode / Name / Brand columns. */
-const CONFIG = { msalClientId:"", tenantId:"", graphFileBase:"", tableName:"" };
+/* ---------- CONFIG: SharePoint (optional) ----------
+   msalClientId / tenantId : from your Azure app registration
+   graphFileBase + tableName : product details Excel table (as before)
+   locationsUrl : Graph URL of your Locations list items, e.g.
+     "https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com:/sites/Home:/lists/Locations/items?$expand=fields&$top=999"
+   locationField : internal name of the column holding the location name ("Title" by default) */
+const CONFIG = { msalClientId:"", tenantId:"", graphFileBase:"", tableName:"", locationsUrl:"", locationField:"Title" };
 
 const $ = s => document.querySelector(s);
 const load = k => JSON.parse(localStorage.getItem(k) || "{}");
+const loadA = k => JSON.parse(localStorage.getItem(k) || "[]");
 const save = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+const keyOf = (code, loc) => code + "|" + loc;      // one stock row per barcode + location
+const locName = l => l || "Unallocated";
 let mode = "add";
 
 function toast(msg){const t=$("#toast");t.textContent=msg;t.classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove("show"),2200)}
 function buzz(){navigator.vibrate&&navigator.vibrate(60)}
 
-/* ---------- Mode toggle ---------- */
+/* Upgrade stock saved by the first version (no locations) */
+(function migrate(){
+  const s = load("stock"); let changed = false;
+  for (const k of Object.keys(s)) if (!k.includes("|")){ s[k+"|"] = {...s[k], code:k, location:""}; delete s[k]; changed = true; }
+  if (changed) save("stock", s);
+})();
+
+/* ---------- Navigation ---------- */
+const TITLES = {home:"Pantry", stock:"Add / remove stock", assign:"Assign stock"};
+function route(){
+  const p = TITLES[(location.hash||"#home").slice(1)] ? (location.hash||"#home").slice(1) : "home";
+  document.querySelectorAll(".page").forEach(s => s.hidden = s.id !== "page-" + p);
+  $("#back").hidden = p === "home"; $("#title").textContent = TITLES[p];
+  if (p === "home") renderHome(); if (p === "stock") { fillLocations(); render(); } if (p === "assign") renderAssign();
+}
+addEventListener("hashchange", route);
+$("#back").onclick = () => location.hash = "home";
+document.querySelectorAll("[data-go]").forEach(b => b.onclick = () => location.hash = b.dataset.go);
+
+function renderHome(){
+  const rows = Object.values(load("stock"));
+  const units = rows.reduce((n,e)=>n+e.qty,0), un = rows.filter(e=>!e.location).reduce((n,e)=>n+e.qty,0);
+  $("#homeStock").textContent = units + " item" + (units===1?"":"s") + " in stock";
+  $("#homeUnalloc").textContent = un ? un + " waiting for a location" : "Nothing to assign";
+}
+
+/* ---------- Locations dropdown ---------- */
+function fillLocations(){
+  const sel = $("#locSel"), keep = localStorage.getItem("lastLoc") || "";
+  sel.innerHTML = '<option value="">Unallocated</option>';
+  loadA("locations").forEach(l => sel.append(new Option(l, l)));
+  sel.value = loadA("locations").includes(keep) ? keep : "";
+}
+$("#locSel").onchange = e => localStorage.setItem("lastLoc", e.target.value);
+
+/* ---------- Add / Remove mode ---------- */
 $("#mAdd").onclick = () => setMode("add");
 $("#mRem").onclick = () => setMode("remove");
 function setMode(m){mode=m;$("#mAdd").classList.toggle("on",m==="add");$("#mRem").classList.toggle("on",m==="remove")}
 
-/* ---------- Stock rendering ---------- */
+/* ---------- Stock list ---------- */
 function render(){
   const stock = load("stock"), term = $("#q").value.toLowerCase();
-  const items = Object.entries(stock).filter(([c,i]) => (i.name+" "+i.brand+" "+c).toLowerCase().includes(term))
+  const items = Object.entries(stock).filter(([k,i]) => (i.name+" "+i.brand+" "+i.code+" "+locName(i.location)).toLowerCase().includes(term))
     .sort((a,b)=>a[1].name.localeCompare(b[1].name));
   $("#list").innerHTML = items.length ? "" : '<div class="empty">No stock yet. Scan something to add it.</div>';
-  for (const [code,i] of items){
+  for (const [key,i] of items){
     const soon = i.expiry && (new Date(i.expiry) - Date.now()) < 3*864e5;
     const el = document.createElement("div"); el.className="item";
     el.innerHTML = `<div class="n"><b></b><small></small></div>
       <div class="qty"><button data-d="-1">−</button><b>${i.qty}</b><button data-d="1">＋</button></div>`;
     el.querySelector("b").textContent = i.name;
     const s = el.querySelector("small");
-    s.textContent = [i.brand, i.expiry && "BB " + i.expiry].filter(Boolean).join(" · ");
+    s.textContent = ["📍 " + locName(i.location), i.brand, i.expiry && "BB " + i.expiry].filter(Boolean).join(" · ");
     if (soon) s.classList.add("soon");
-    el.querySelectorAll("[data-d]").forEach(b => b.onclick = () => adjust(code, +b.dataset.d));
+    el.querySelectorAll("[data-d]").forEach(b => b.onclick = () => adjust(key, +b.dataset.d));
     $("#list").append(el);
   }
 }
 $("#q").oninput = render;
 
-function adjust(code, d){
-  const stock = load("stock"), i = stock[code]; if(!i) return;
+function adjust(key, d){
+  const stock = load("stock"), i = stock[key]; if(!i) return;
   i.qty += d;
-  if (i.qty <= 0) { delete stock[code]; toast(`${i.name} used up`); }
-  else toast(`${i.name}: ${i.qty}`);
+  if (i.qty <= 0) { delete stock[key]; toast(`${i.name} used up (${locName(i.location)})`); }
+  else toast(`${i.name}: ${i.qty} (${locName(i.location)})`);
   save("stock", stock); render();
 }
 
 /* ---------- Barcode handling ---------- */
 async function handleCode(code){
   code = String(code).trim(); if(!code) return;
-  const stock = load("stock");
+  const stock = load("stock"), loc = $("#locSel").value;
   if (mode === "remove"){
-    if (stock[code]) { adjust(code, -1); buzz(); }
-    else toast("Not in stock: " + code);
+    const all = Object.entries(stock).filter(([k,e]) => e.code === code);
+    // prefer the selected location, then unallocated, then anywhere
+    const hit = all.find(([k,e])=>e.location===loc) || all.find(([k,e])=>!e.location) || all[0];
+    if (hit) { adjust(hit[0], -1); buzz(); } else toast("Not in stock: " + code);
     return;
   }
-  if (stock[code]) { adjust(code, 1); buzz(); return; }
+  const key = keyOf(code, loc);
+  if (stock[key]) { adjust(key, 1); buzz(); return; }
   toast("Looking up " + code + "…");
-  const found = await lookup(code);
-  openItemDialog(code, found);
+  openItemDialog(code, await lookup(code));
 }
 $("#go").onclick = () => { handleCode($("#manual").value); $("#manual").value=""; };
 $("#manual").onkeydown = e => { if(e.key==="Enter") $("#go").click(); };
 
 /* ---------- Lookups: remembered -> Open Food Facts -> SharePoint ---------- */
 async function lookup(code){
-  const known = load("known"); // products we've seen before
+  const known = load("known");
   if (known[code]) return {...known[code], src:"Saved earlier"};
   try {
     const r = await fetch(`https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=product_name,brands,quantity`);
@@ -173,7 +244,7 @@ let pending = null;
 function openItemDialog(code, f){
   pending = code;
   $("#itemTitle").textContent = code;
-  $("#itemSrc").textContent = f ? "Found via " + f.src : "Not found – enter the details";
+  $("#itemSrc").textContent = (f ? "Found via " + f.src : "Not found – enter the details") + " · 📍 " + locName($("#locSel").value);
   $("#fName").value = f?.name || ""; $("#fBrand").value = f?.brand || "";
   $("#fQty").value = 1; $("#fExp").value = "";
   $("#itemDlg").showModal();
@@ -181,21 +252,52 @@ function openItemDialog(code, f){
 $("#itemCancel").onclick = () => $("#itemDlg").close();
 $("#itemSave").onclick = () => {
   const name = $("#fName").value.trim(); if(!name) return $("#fName").focus();
-  const brand = $("#fBrand").value.trim();
-  const stock = load("stock"), known = load("known");
-  stock[pending] = { name, brand, qty: Math.max(1, +$("#fQty").value||1), expiry: $("#fExp").value };
+  const brand = $("#fBrand").value.trim(), loc = $("#locSel").value, qty = Math.max(1, +$("#fQty").value||1);
+  const stock = load("stock"), known = load("known"), key = keyOf(pending, loc);
+  stock[key] = stock[key] ? {...stock[key], qty: stock[key].qty + qty}
+                          : { code: pending, name, brand, qty, expiry: $("#fExp").value, location: loc };
   known[pending] = { name, brand };
   save("stock", stock); save("known", known);
   $("#itemDlg").close(); render(); toast("Added " + name);
 };
 
+/* ---------- Assign unallocated stock ---------- */
+function renderAssign(){
+  const un = Object.entries(load("stock")).filter(([k,e]) => !e.location).sort((a,b)=>a[1].name.localeCompare(b[1].name));
+  const locs = loadA("locations"), box = $("#assignList");
+  box.innerHTML = "";
+  if (!un.length) { box.innerHTML = '<div class="empty">🎉 Everything has a location.</div>'; return; }
+  if (!locs.length) { box.innerHTML = '<div class="empty">No locations yet.<br>Set up the SharePoint list, then tap Sync SharePoint on the home screen.</div>'; return; }
+  for (const [key,e] of un){
+    const el = document.createElement("div"); el.className = "item"; el.style.flexWrap = "wrap";
+    el.innerHTML = `<div class="n" style="flex-basis:100%"><b></b><small>${e.qty} unallocated</small></div>
+      <input type="number" min="1" max="${e.qty}" value="${e.qty}" style="max-width:72px">
+      <select><option value="">Choose location…</option></select>
+      <button class="primary">Assign</button>`;
+    el.querySelector("b").textContent = e.name;
+    const sel = el.querySelector("select"); locs.forEach(l => sel.append(new Option(l, l)));
+    el.querySelector("button").onclick = () => {
+      if (!sel.value) return toast("Choose a location first");
+      const n = Math.min(e.qty, Math.max(1, +el.querySelector("input").value || 1));
+      moveStock(key, sel.value, n); toast(`${n} × ${e.name} → ${sel.value}`); renderAssign();
+    };
+    box.append(el);
+  }
+}
+function moveStock(key, loc, n){
+  const s = load("stock"), e = s[key], k2 = keyOf(e.code, loc);
+  s[k2] = s[k2] ? {...s[k2], qty: s[k2].qty + n} : {...e, qty: n, location: loc};
+  e.qty -= n; if (e.qty <= 0) delete s[key];
+  save("stock", s);
+}
+
 /* ---------- Scanner ---------- */
 let stream, timer, h5, lastCode = "", lastAt = 0;
 function onDecoded(code){
-  if (code === lastCode && Date.now() - lastAt < 3000) return; // debounce repeats
+  if (code === lastCode && Date.now() - lastAt < 3000) return;
   lastCode = code; lastAt = Date.now();
   handleCode(code);
-  if (!load("stock")[code] && mode === "add") stopScan(); // unknown item -> dialog takes over
+  if (mode === "add" && !load("stock")[keyOf(code, $("#locSel").value)]) stopScan();
 }
 async function startScan(){
   $("#scanDlg").showModal();
@@ -208,7 +310,7 @@ async function startScan(){
       timer = setInterval(async () => {
         try { const r = await det.detect($("#vid")); if (r.length) onDecoded(r[0].rawValue); } catch(e){}
       }, 250);
-    } else { // fallback (e.g. iPhone Safari)
+    } else {
       $("#vid").hidden = true; $("#reader").hidden = false;
       if (!window.Html5Qrcode) await new Promise((ok, no) => {
         const s = document.createElement("script");
@@ -231,37 +333,52 @@ $("#scanClose").onclick = stopScan;
 $("#scanDlg").addEventListener("cancel", stopScan);
 
 /* ---------- SharePoint (Microsoft Graph + MSAL) ---------- */
-async function syncSharePoint(){
+async function getToken(){
+  if (!window.msal) await new Promise((ok,no)=>{const s=document.createElement("script");
+    s.src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js";s.onload=ok;s.onerror=no;document.head.append(s)});
+  const app = new msal.PublicClientApplication({auth:{clientId:CONFIG.msalClientId,
+    authority:"https://login.microsoftonline.com/"+CONFIG.tenantId, redirectUri:location.origin+location.pathname},
+    cache:{cacheLocation:"localStorage"}});
+  await app.initialize?.();
+  const scopes = ["Files.Read.All","Sites.Read.All"];
+  let tok;
+  try { tok = await app.acquireTokenSilent({scopes, account:app.getAllAccounts()[0]}); }
+  catch(e){ tok = await app.acquireTokenPopup({scopes}); }
+  return tok.accessToken;
+}
+const graph = async (url, t) => {
+  const r = await fetch(url, {headers:{Authorization:"Bearer "+t}});
+  if (!r.ok) throw new Error(r.status + " " + url.split("?")[0].split("/").slice(-2).join("/"));
+  return r.json();
+};
+async function syncLocations(t){
+  const j = await graph(CONFIG.locationsUrl, t);
+  const names = j.value.map(x => String(x.fields?.[CONFIG.locationField] || "").trim()).filter(Boolean);
+  save("locations", [...new Set(names)].sort((a,b)=>a.localeCompare(b)));
+  return names.length;
+}
+async function syncProducts(t){
+  const j = await graph(`${CONFIG.graphFileBase}/workbook/tables/${encodeURIComponent(CONFIG.tableName)}/range?$select=values`, t);
+  const [head, ...rows] = j.values;
+  const col = w => head.findIndex(h => String(h).toLowerCase().includes(w));
+  const cB = col("barcode"), cN = col("name"), cBr = col("brand"), sp = {};
+  rows.forEach(v => { const c = String(v[cB]||"").trim(); if(c) sp[c] = {name:String(v[cN]||""), brand: cBr>=0?String(v[cBr]||""):""}; });
+  save("sp", sp); return Object.keys(sp).length;
+}
+$("#syncBtn").onclick = async () => {
   if (!CONFIG.msalClientId) return toast("SharePoint not configured yet");
   try {
-    if (!window.msal) await new Promise((ok,no)=>{const s=document.createElement("script");
-      s.src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js";s.onload=ok;s.onerror=no;document.head.append(s)});
-    const app = new msal.PublicClientApplication({auth:{clientId:CONFIG.msalClientId,
-      authority:"https://login.microsoftonline.com/"+CONFIG.tenantId, redirectUri:location.origin+location.pathname},
-      cache:{cacheLocation:"localStorage"}});
-    await app.initialize?.();
-    const scopes = ["Files.Read.All","Sites.Read.All"];
-    let tok;
-    const acct = app.getAllAccounts()[0];
-    try { tok = await app.acquireTokenSilent({scopes, account:acct}); }
-    catch(e){ tok = await app.acquireTokenPopup({scopes}); }
-    const url = `${CONFIG.graphFileBase}/workbook/tables/${encodeURIComponent(CONFIG.tableName)}/range?$select=values`;
-    const r = await fetch(url, {headers:{Authorization:"Bearer "+tok.accessToken}});
-    if (!r.ok) throw new Error(r.status);
-    const [head, ...rows] = (await r.json()).values;
-    const col = w => head.findIndex(h => String(h).toLowerCase().includes(w));
-    const cB = col("barcode"), cN = col("name"), cBr = col("brand");
-    const sp = {};
-    rows.forEach(v => { const c = String(v[cB]||"").trim(); if(c) sp[c] = {name:String(v[cN]||""), brand: cBr>=0?String(v[cBr]||""):""}; });
-    save("sp", sp); toast(`Synced ${Object.keys(sp).length} products`);
-  } catch(e){ toast("SharePoint sync failed (" + (e.message||e) + ")"); }
-}
-$("#syncBtn").onclick = syncSharePoint;
+    const t = await getToken(), done = [];
+    if (CONFIG.locationsUrl) done.push((await syncLocations(t)) + " locations");
+    if (CONFIG.graphFileBase && CONFIG.tableName) done.push((await syncProducts(t)) + " products");
+    toast("Synced " + (done.join(" and ") || "nothing – check CONFIG"));
+  } catch(e){ toast("Sync failed (" + (e.message||e) + ")"); }
+};
 
 /* ---------- Export ---------- */
 $("#exportBtn").onclick = () => {
-  const rows = [["Barcode","Name","Brand","Qty","Best before"],
-    ...Object.entries(load("stock")).map(([c,i])=>[c,i.name,i.brand,i.qty,i.expiry])];
+  const rows = [["Barcode","Name","Brand","Location","Qty","Best before"],
+    ...Object.values(load("stock")).map(i=>[i.code,i.name,i.brand,locName(i.location),i.qty,i.expiry])];
   const csv = rows.map(r=>r.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(",")).join("\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"})); a.download = "pantry.csv"; a.click();
@@ -269,7 +386,7 @@ $("#exportBtn").onclick = () => {
 
 /* ---------- Boot ---------- */
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
-render();
+route();
 </script>
 </body>
 </html>
