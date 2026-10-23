@@ -72,6 +72,7 @@ video,#reader{width:100%;border-radius:12px;background:#000;min-height:200px}
   <div id="homeBtns" hidden>
     <button class="big" data-go="stock"><span>📦</span><div>Add / remove stock<small id="homeStock"></small></div></button>
     <button class="big" data-go="assign"><span>📍</span><div>Assign unallocated stock<small id="homeUnalloc"></small></div></button>
+    <button class="big" data-go="match"><span>🏷️</span><div>Match barcodes<small id="homeMatch"></small></div></button>
     <div class="row" style="margin-top:20px">
       <button id="syncBtn">Refresh from SharePoint</button>
       <button id="exportBtn">Export CSV</button>
@@ -99,6 +100,12 @@ video,#reader{width:100%;border-radius:12px;background:#000;min-height:200px}
 <!-- ============ ASSIGN ============ -->
 <section class="page" id="page-assign" hidden>
   <div id="assignList"></div>
+</section>
+
+<!-- ============ MATCH BARCODES ============ -->
+<section class="page" id="page-match" hidden>
+  <p style="color:var(--mute);margin-top:0">Items that arrived without a barcode (e.g. from a Morrisons receipt). Scan a barcode from the item and it is remembered for next time. Use “No barcode” for things like loose fruit.</p>
+  <div id="matchList"></div>
 </section>
 </main>
 
@@ -138,15 +145,18 @@ const CONFIG = {
   fields:{ name:"Title", brand:"Brand", qty:"Quantity", expiry:"BestBefore", code:"Barcode", location:"Location" },
   locationsUrl:"https://graph.microsoft.com/v1.0/sites/engledew.sharepoint.com:/sites/EngledewEnterprises:/lists/Locations/items?$expand=fields&$top=999",
   locationField:"Title",
-  graphFileBase:"", tableName:""
+  graphFileBase:"", tableName:"",
+  // Product Barcodes list: remembers which barcode belongs to which product name (columns: Title, Barcode, Brand)
+  productsListBase:"https://graph.microsoft.com/v1.0/sites/engledew.sharepoint.com:/sites/EngledewEnterprises:/lists/Product%20Barcodes",
+  productFields:{ name:"Title", code:"Barcode", brand:"Brand" }
 };
-const F = CONFIG.fields;
+const F = CONFIG.fields, PF = CONFIG.productFields;
 
 const $ = s => document.querySelector(s);
 const loadA = k => JSON.parse(localStorage.getItem(k) || "[]");   // only locations + product lookup are cached
 const save = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 const locName = l => l || "Unallocated";
-let mode = "add", rows = [], authed = false;   // rows = stock, held in memory only
+let mode = "add", rows = [], authed = false, products = {}, productList = [], linkId = null;   // rows = stock, held in memory only
 ["stock","known"].forEach(k => localStorage.removeItem(k));        // remove data from earlier versions
 
 function toast(msg){const t=$("#toast");t.textContent=msg;t.classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove("show"),2400)}
@@ -188,6 +198,7 @@ async function refresh(){
     while (url){ const j = await api("GET", url); out.push(...j.value.map(fromItem)); url = j["@odata.nextLink"]; }
     rows = out;
     if (CONFIG.locationsUrl) { try { await syncLocations(); } catch(e){} }
+    if (CONFIG.productsListBase) { try { await loadProducts(); } catch(e){ toast("Product Barcodes list not readable (" + e.message + ")"); } }
   } catch(e){ toast("Couldn't load stock (" + e.message + ")"); }
   route();
 }
@@ -199,17 +210,36 @@ async function setQty(row, q){
   if (q <= 0){ await api("DELETE", `${CONFIG.stockListBase}/items/${row.id}`); rows = rows.filter(x => x !== row); }
   else { await api("PATCH", `${CONFIG.stockListBase}/items/${row.id}/fields`, {[F.qty]: q}); row.qty = q; }
 }
+async function loadProducts(){
+  let url = `${CONFIG.productsListBase}/items?$expand=fields&$top=500`, out = [];
+  while (url){ const j = await api("GET", url); out.push(...j.value); url = j["@odata.nextLink"]; }
+  productList = out.map(it => ({ id:it.id, name:it.fields?.[PF.name]||"", code:String(it.fields?.[PF.code]||""), brand:it.fields?.[PF.brand]||"" }));
+  products = {};
+  productList.forEach(p => { if (p.code && !products[p.code]) products[p.code] = p; });
+}
+/* remember "this product name <-> this barcode" so future deliveries and scans recognise it */
+async function saveProduct(code, name, brand){
+  if (!CONFIG.productsListBase || !code || !name) return;
+  let ex = productList.find(p => p.name.toLowerCase() === name.toLowerCase());
+  if (ex){
+    if (ex.code !== code){ await api("PATCH", `${CONFIG.productsListBase}/items/${ex.id}/fields`, {[PF.code]: code}); ex.code = code; }
+  } else {
+    const res = await api("POST", `${CONFIG.productsListBase}/items`, {fields:{[PF.name]:name, [PF.code]:code, [PF.brand]:brand||""}});
+    ex = {id:res.id, name, code, brand:brand||""}; productList.push(ex);
+  }
+  products[code] = ex;
+}
 /* all writes go through one queue so quick scans can't clash */
 let chain = Promise.resolve();
 const run = fn => (chain = chain.then(fn).then(()=>route()).catch(async e => { toast("Failed: " + e.message); await refresh(); }));
 
 /* ---------- Navigation ---------- */
-const TITLES = {home:"Pantry", stock:"Add / remove stock", assign:"Assign stock"};
+const TITLES = {home:"Pantry", stock:"Add / remove stock", assign:"Assign stock", match:"Match barcodes"};
 function route(){
   let p = (location.hash||"#home").slice(1); if (!TITLES[p] || !authed) p = "home";
   document.querySelectorAll(".page").forEach(s => s.hidden = s.id !== "page-" + p);
   $("#back").hidden = p === "home"; $("#reload").hidden = p === "home"; $("#title").textContent = TITLES[p];
-  if (p === "home") renderHome(); if (p === "stock") { fillLocations(); render(); } if (p === "assign") renderAssign();
+  if (p === "home") renderHome(); if (p === "stock") { fillLocations(); render(); } if (p === "assign") renderAssign(); if (p === "match") renderMatch();
 }
 addEventListener("hashchange", route);
 $("#back").onclick = () => location.hash = "home";
@@ -222,6 +252,8 @@ function renderHome(){
   const units = rows.reduce((n,e)=>n+e.qty,0), un = rows.filter(e=>!e.location).reduce((n,e)=>n+e.qty,0);
   $("#homeStock").textContent = units + " item" + (units===1?"":"s") + " in stock";
   $("#homeUnalloc").textContent = un ? un + " waiting for a location" : "Nothing to assign";
+  const nb = new Set(rows.filter(e => !e.code).map(e => e.name)).size;
+  $("#homeMatch").textContent = nb ? nb + " product" + (nb===1?"":"s") + " without a barcode" : "All items have barcodes";
 }
 $("#signin").onclick = async () => {
   try { await token(true); authed = true; toast("Loading stock…"); await refresh(); }
@@ -277,7 +309,7 @@ async function handleCode(code){
   code = String(code).trim(); if(!code) return;
   const loc = $("#locSel").value;
   if (mode === "remove"){
-    const all = rows.filter(e => e.code === code);
+    const all = rows.filter(e => e.code === code).sort((a,b) => (a.expiry||"9999").localeCompare(b.expiry||"9999")); // earliest best before first
     // prefer the selected location, then unallocated, then anywhere
     const hit = all.find(e=>e.location===loc) || all.find(e=>!e.location) || all[0];
     if (hit) { buzz(); adjust(hit.id, -1); } else toast("Not in stock: " + code);
@@ -293,6 +325,8 @@ $("#manual").onkeydown = e => { if(e.key==="Enter") $("#go").click(); };
 
 /* ---------- Lookups: your list -> Open Food Facts -> Excel product file ---------- */
 async function lookup(code){
+  const known = products[code];
+  if (known) return {name:known.name, brand:known.brand, src:"Your product list"};
   const seen = rows.find(r => r.code === code);
   if (seen) return {name:seen.name, brand:seen.brand, src:"Already in your list"};
   try {
@@ -328,6 +362,7 @@ $("#itemSave").onclick = () => {
     const ex = rows.find(e => e.code === d.code && e.location === d.location);
     if (ex) await setQty(ex, ex.qty + d.qty); else await createRow(d);
     toast("Added " + name);
+    try { await saveProduct(d.code, d.name, d.brand); } catch(e){ toast("Added, but couldn't remember the product (" + e.message + ")"); }
   });
 };
 
@@ -361,16 +396,50 @@ function renderAssign(){
   }
 }
 
+/* ---------- Match barcodes ---------- */
+function renderMatch(){
+  const todo = rows.filter(e => !e.code).sort((a,b)=>a.name.localeCompare(b.name)), box = $("#matchList");
+  box.innerHTML = "";
+  if (!todo.length) { box.innerHTML = '<div class="empty">🎉 Every item has a barcode.</div>'; return; }
+  for (const e of todo){
+    const el = document.createElement("div"); el.className = "item"; el.style.flexWrap = "wrap";
+    el.innerHTML = `<div class="n" style="flex-basis:100%"><b></b><small></small></div>
+      <button class="scan" style="flex:2">📷 Scan barcode</button><button>⌨️</button><button>🚫 None</button>`;
+    el.querySelector("b").textContent = e.name;
+    el.querySelector("small").textContent = e.qty + " in stock · 📍 " + locName(e.location);
+    const [scanB, typeB, noneB] = el.querySelectorAll("button");
+    scanB.onclick = () => { linkId = e.id; startScan("Scan the barcode for: " + e.name); };
+    typeB.onclick = () => { const c = (prompt("Type the barcode for " + e.name) || "").trim(); if (c) linkRow(e.id, c); };
+    noneB.onclick = () => { if (confirm("Mark '" + e.name + "' as having no barcode?")) linkRow(e.id, "NONE"); };
+    box.append(el);
+  }
+}
+function linkRow(id, code){
+  const src = rows.find(r => r.id === id); if (!src) return;
+  const name = src.name, brand = src.brand;
+  toast("Saving barcode…");
+  run(async () => {
+    // every row of the same product gets the barcode, not just this one
+    for (const r of rows.filter(x => !x.code && x.name === name)){
+      await api("PATCH", `${CONFIG.stockListBase}/items/${r.id}/fields`, {[F.code]: code}); r.code = code;
+    }
+    try { await saveProduct(code, name, brand); } catch(e){ toast("Barcode saved, but not remembered for next time (" + e.message + ")"); return; }
+    toast(code === "NONE" ? `${name}: marked as no barcode` : `${name}: barcode saved`);
+  });
+}
+
 /* ---------- Scanner ---------- */
 let stream, timer, h5, lastCode = "", lastAt = 0;
 function onDecoded(code){
+  if (linkId){ const id = linkId; linkId = null; stopScan(); buzz(); linkRow(id, String(code).trim()); return; }
   if (code === lastCode && Date.now() - lastAt < 3000) return;
   lastCode = code; lastAt = Date.now();
   handleCode(code);
   if (mode === "add" && !rows.find(e => e.code === code && e.location === $("#locSel").value)) stopScan();
 }
-async function startScan(){
+async function startScan(msg){
   $("#scanDlg").showModal();
+  $("#scanMsg").textContent = msg || "Point at a barcode…";
   try {
     if ("BarcodeDetector" in window){
       $("#vid").hidden = false; $("#reader").hidden = true;
@@ -389,12 +458,13 @@ async function startScan(){
   } catch(e){ $("#scanMsg").textContent = "Camera unavailable – type the barcode instead."; }
 }
 function stopScan(){
+  linkId = null;
   clearInterval(timer); timer = null;
   stream?.getTracks().forEach(t => t.stop()); stream = null;
   if (h5){ h5.stop().catch(()=>{}).finally(()=>{ try{h5.clear()}catch(e){} h5=null; }); }
   if ($("#scanDlg").open) $("#scanDlg").close();
 }
-$("#scanBtn").onclick = startScan;
+$("#scanBtn").onclick = () => startScan();
 $("#scanClose").onclick = stopScan;
 $("#scanDlg").addEventListener("cancel", stopScan);
 
