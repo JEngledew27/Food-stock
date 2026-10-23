@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2f6f4f">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>Pantry</title>
+<style>
+/* ===== COLOURS: change these hex codes to restyle the app ===== */
+:root{
+  --accent:#2f6f4f;   /* general accent: header toggle, Save buttons, Home buttons */
+  --scan:#2f6f4f;     /* the Scan button only */
+  --bg:#f6f7f4;--card:#fff;--text:#1c2420;--mute:#6a756e;--danger:#b3412f;--line:#e2e6e0}
+@media (prefers-color-scheme:dark){:root{--accent:#5cb98a;--scan:#5cb98a;--bg:#141815;--card:#1d231f;--text:#eaf0ec;--mute:#93a099;--danger:#e0735f;--line:#2c352f}}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--text);padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+header{position:sticky;top:0;background:var(--bg);padding:12px 16px;border-bottom:1px solid var(--line);z-index:5}
+.top{display:flex;align-items:center;gap:10px}
+h1{margin:0;font-size:20px;flex:1}
+.row{display:flex;gap:8px}
+button,input,select{font:inherit;border-radius:10px;border:1px solid var(--line);padding:10px 12px;background:var(--card);color:var(--text)}
+input,select{flex:1;min-width:0}
+button{cursor:pointer}
+.seg button{flex:1}
+.seg button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.seg button.on.rem{background:var(--danger);border-color:var(--danger)}
+.primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+.scan{background:var(--scan);color:#fff;border-color:var(--scan);font-weight:600}
+main{padding:12px 16px 80px;max-width:640px;margin:auto}
+.big{display:flex;align-items:center;gap:16px;width:100%;min-height:110px;margin-bottom:14px;padding:18px;font-size:20px;font-weight:600;text-align:left;background:var(--accent);color:#fff;border:none;border-radius:18px}
+.big span{font-size:40px}
+.big small{display:block;font-weight:400;font-size:14px;opacity:.85}
+.item{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px}
+.item .n{flex:1;min-width:0}
+.item b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item small{color:var(--mute)}
+.qty{display:flex;align-items:center;gap:8px}
+.qty button{width:36px;height:36px;padding:0}
+.soon{color:var(--danger)}
+.note{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+dialog{border:none;border-radius:16px;background:var(--card);color:var(--text);width:min(92vw,420px);padding:16px}
+dialog::backdrop{background:#0008}
+label{display:block;margin:10px 0 4px;color:var(--mute);font-size:14px}
+dialog input{width:100%}
+video,#reader{width:100%;border-radius:12px;background:#000;min-height:200px}
+#toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:20px;opacity:0;transition:.25s;pointer-events:none;max-width:90vw;text-align:center;z-index:20}
+#toast.show{opacity:1}
+.empty{color:var(--mute);text-align:center;margin-top:40px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <button id="back" hidden>← Home</button>
+    <h1 id="title">Pantry</h1>
+    <button id="reload" hidden title="Reload from SharePoint">↻</button>
+  </div>
+</header>
+
+<main>
+<!-- ============ HOME ============ -->
+<section class="page" id="page-home">
+  <div class="note" id="setupNote" hidden>SharePoint isn't configured yet. Fill in the <code>CONFIG</code> block at the top of the script in <code>index.html</code>.</div>
+  <div class="note" id="signinBox" hidden>
+    <p style="margin-top:0">Sign in with your Microsoft account to load and save stock in SharePoint.</p>
+    <button id="signin" class="primary" style="width:100%">Sign in with Microsoft</button>
+  </div>
+  <div id="homeBtns" hidden>
+    <button class="big" data-go="stock"><span>📦</span><div>Add / remove stock<small id="homeStock"></small></div></button>
+    <button class="big" data-go="assign"><span>📍</span><div>Assign unallocated stock<small id="homeUnalloc"></small></div></button>
+    <button class="big" data-go="match"><span>🏷️</span><div>Match barcodes<small id="homeMatch"></small></div></button>
+    <div class="row" style="margin-top:20px">
+      <button id="syncBtn">Refresh from SharePoint</button>
+      <button id="exportBtn">Export CSV</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ADD / REMOVE ============ -->
+<section class="page" id="page-stock" hidden>
+  <div class="row seg" style="margin-bottom:8px">
+    <button id="mAdd" class="on">＋ Add stock</button>
+    <button id="mRem" class="rem">－ Remove stock</button>
+  </div>
+  <label style="margin-top:0">Location</label>
+  <select id="locSel" style="width:100%;margin-bottom:8px"></select>
+  <div class="row">
+    <button id="scanBtn" class="scan">📷 Scan</button>
+    <input id="manual" inputmode="numeric" placeholder="Type barcode">
+    <button id="go">Go</button>
+  </div>
+  <input id="q" placeholder="Search stock or location…" style="width:100%;margin:12px 0">
+  <div id="list"></div>
+</section>
+
+<!-- ============ ASSIGN ============ -->
+<section class="page" id="page-assign" hidden>
+  <div id="assignList"></div>
+</section>
+
+<!-- ============ MATCH BARCODES ============ -->
+<section class="page" id="page-match" hidden>
+  <p style="color:var(--mute);margin-top:0">Items that arrived without a barcode (e.g. from a Morrisons receipt). Scan a barcode from the item and it is remembered for next time. Use “No barcode” for things like loose fruit.</p>
+  <div id="matchList"></div>
+</section>
+</main>
+
+<dialog id="scanDlg">
+  <video id="vid" playsinline muted></video>
+  <div id="reader" hidden></div>
+  <p id="scanMsg" style="color:var(--mute);margin:8px 0">Point at a barcode…</p>
+  <button id="scanClose" style="width:100%">Close</button>
+</dialog>
+
+<dialog id="itemDlg">
+  <h3 style="margin:0 0 4px" id="itemTitle">New item</h3>
+  <small id="itemSrc" style="color:var(--mute)"></small>
+  <label>Name</label><input id="fName">
+  <label>Brand</label><input id="fBrand">
+  <label>Quantity to add</label><input id="fQty" type="number" min="1" value="1">
+  <label>Best before (optional)</label><input id="fExp" type="date">
+  <div class="row" style="margin-top:14px">
+    <button id="itemCancel">Cancel</button>
+    <button id="itemSave" class="primary">Save</button>
+  </div>
+</dialog>
+<div id="toast"></div>
+
+<script>
+/* ================= CONFIG =================
+   msalClientId / tenantId : from your Azure app registration.
+   stockListBase : Graph address of the Food Stock list (no trailing slash).
+   fields        : INTERNAL column names in that list (see setup notes).
+   locationsUrl  : (optional) Graph address of a Locations list's items, e.g.
+                   ".../lists/Locations/items?$expand=fields&$top=999"
+   locationField : column in the Locations list holding the name.
+   graphFileBase + tableName : (optional) Excel table of product details used as a lookup fallback. */
+const CONFIG = {
+  msalClientId:"d6f31bf5-65af-495c-9a50-f3926dceb244", tenantId:"5456d119-e57a-465a-8f3f-19f7432f2bec",
+  stockListBase:"https://graph.microsoft.com/v1.0/sites/engledew.sharepoint.com:/sites/EngledewEnterprises:/lists/Food%20Stock",
+  fields:{ name:"Title", brand:"Brand", qty:"Quantity", expiry:"BestBefore", code:"Barcode", location:"Location" },
+  locationsUrl:"https://graph.microsoft.com/v1.0/sites/engledew.sharepoint.com:/sites/EngledewEnterprises:/lists/Locations/items?$expand=fields&$top=999",
+  locationField:"Title",
+  graphFileBase:"", tableName:"",
+  // Product Barcodes list: remembers which barcode belongs to which product name (columns: Title, Barcode, Brand)
+  productsListBase:"https://graph.microsoft.com/v1.0/sites/engledew.sharepoint.com:/sites/EngledewEnterprises:/lists/Product%20Barcodes",
+  productFields:{ name:"Title", code:"Barcode", brand:"Brand" }
+};
+const F = CONFIG.fields, PF = CONFIG.productFields;
+
+const $ = s => document.querySelector(s);
+const loadA = k => JSON.parse(localStorage.getItem(k) || "[]");   // only locations + product lookup are cached
+const save = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+const locName = l => l || "Unallocated";
+let mode = "add", rows = [], authed = false, products = {}, productList = [], linkId = null;   // rows = stock, held in memory only
+["stock","known"].forEach(k => localStorage.removeItem(k));        // remove data from earlier versions
+
+function toast(msg){const t=$("#toast");t.textContent=msg;t.classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove("show"),2400)}
+function buzz(){navigator.vibrate&&navigator.vibrate(60)}
+const loadScript = src => new Promise((ok,no)=>{const s=document.createElement("script");s.src=src;s.onload=ok;s.onerror=no;document.head.append(s)});
+
+/* ---------- Microsoft sign-in ---------- */
+const SCOPES = ["Sites.ReadWrite.All", ...(CONFIG.graphFileBase ? ["Files.Read.All"] : [])];
+let msalApp;
+async function token(interactive){
+  if (!msalApp){
+    if (!window.msal) await loadScript("https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js");
+    msalApp = new msal.PublicClientApplication({auth:{clientId:CONFIG.msalClientId,
+      authority:"https://login.microsoftonline.com/"+CONFIG.tenantId, redirectUri:location.origin+location.pathname},
+      cache:{cacheLocation:"localStorage"}});
+    await msalApp.initialize?.();
+  }
+  const account = msalApp.getAllAccounts()[0];
+  try { if (!account) throw 0; return (await msalApp.acquireTokenSilent({scopes:SCOPES, account})).accessToken; }
+  catch(e){ if (!interactive) throw new Error("not signed in"); return (await msalApp.acquireTokenPopup({scopes:SCOPES})).accessToken; }
+}
+async function api(method, url, body){
+  const r = await fetch(url, {method, headers:{Authorization:"Bearer "+await token(false), "Content-Type":"application/json"},
+    body: body ? JSON.stringify(body) : undefined});
+  if (!r.ok) throw new Error(r.status + " " + ((await r.text()).match(/"message":"([^"]+)/)||[])[1]);
+  return r.status === 204 ? null : r.json();
+}
+
+/* ---------- SharePoint list <-> rows ---------- */
+const fromItem = it => { const f = it.fields || {};
+  return { id:it.id, name:f[F.name]||"", brand:f[F.brand]||"", qty:+f[F.qty]||0,
+           expiry:String(f[F.expiry]||"").slice(0,10), code:String(f[F.code]||""), location:f[F.location]||"" }; };
+const toFields = r => ({ [F.name]:r.name, [F.brand]:r.brand||"", [F.qty]:r.qty, [F.code]:r.code, [F.location]:r.location||"",
+  ...(r.expiry ? {[F.expiry]: r.expiry + "T12:00:00Z"} : {}) });
+
+async function refresh(){
+  try {
+    let url = `${CONFIG.stockListBase}/items?$expand=fields&$top=500`, out = [];
+    while (url){ const j = await api("GET", url); out.push(...j.value.map(fromItem)); url = j["@odata.nextLink"]; }
+    rows = out;
+    if (CONFIG.locationsUrl) { try { await syncLocations(); } catch(e){} }
+    if (CONFIG.productsListBase) { try { await loadProducts(); } catch(e){ toast("Product Barcodes list not readable (" + e.message + ")"); } }
+  } catch(e){ toast("Couldn't load stock (" + e.message + ")"); }
+  route();
+}
+async function createRow(r){
+  const res = await api("POST", `${CONFIG.stockListBase}/items`, {fields: toFields(r)});
+  rows.push({...r, id: res.id});
+}
+async function setQty(row, q){
+  if (q <= 0){ await api("DELETE", `${CONFIG.stockListBase}/items/${row.id}`); rows = rows.filter(x => x !== row); }
+  else { await api("PATCH", `${CONFIG.stockListBase}/items/${row.id}/fields`, {[F.qty]: q}); row.qty = q; }
+}
+async function loadProducts(){
+  let url = `${CONFIG.productsListBase}/items?$expand=fields&$top=500`, out = [];
+  while (url){ const j = await api("GET", url); out.push(...j.value); url = j["@odata.nextLink"]; }
+  productList = out.map(it => ({ id:it.id, name:it.fields?.[PF.name]||"", code:String(it.fields?.[PF.code]||""), brand:it.fields?.[PF.brand]||"" }));
+  products = {};
+  productList.forEach(p => { if (p.code && !products[p.code]) products[p.code] = p; });
+}
+/* remember "this product name <-> this barcode" so future deliveries and scans recognise it */
+async function saveProduct(code, name, brand){
+  if (!CONFIG.productsListBase || !code || !name) return;
+  let ex = productList.find(p => p.name.toLowerCase() === name.toLowerCase());
+  if (ex){
+    if (ex.code !== code){ await api("PATCH", `${CONFIG.productsListBase}/items/${ex.id}/fields`, {[PF.code]: code}); ex.code = code; }
+  } else {
+    const res = await api("POST", `${CONFIG.productsListBase}/items`, {fields:{[PF.name]:name, [PF.code]:code, [PF.brand]:brand||""}});
+    ex = {id:res.id, name, code, brand:brand||""}; productList.push(ex);
+  }
+  products[code] = ex;
+}
+/* all writes go through one queue so quick scans can't clash */
+let chain = Promise.resolve();
+const run = fn => (chain = chain.then(fn).then(()=>route()).catch(async e => { toast("Failed: " + e.message); await refresh(); }));
+
+/* ---------- Navigation ---------- */
+const TITLES = {home:"Pantry", stock:"Add / remove stock", assign:"Assign stock", match:"Match barcodes"};
+function route(){
+  let p = (location.hash||"#home").slice(1); if (!TITLES[p] || !authed) p = "home";
+  document.querySelectorAll(".page").forEach(s => s.hidden = s.id !== "page-" + p);
+  $("#back").hidden = p === "home"; $("#reload").hidden = p === "home"; $("#title").textContent = TITLES[p];
+  if (p === "home") renderHome(); if (p === "stock") { fillLocations(); render(); } if (p === "assign") renderAssign(); if (p === "match") renderMatch();
+}
+addEventListener("hashchange", route);
+$("#back").onclick = () => location.hash = "home";
+$("#reload").onclick = () => refresh();
+document.querySelectorAll("[data-go]").forEach(b => b.onclick = () => location.hash = b.dataset.go);
+
+function renderHome(){
+  const ready = !!(CONFIG.msalClientId && CONFIG.stockListBase);
+  $("#setupNote").hidden = ready; $("#signinBox").hidden = !ready || authed; $("#homeBtns").hidden = !authed;
+  const units = rows.reduce((n,e)=>n+e.qty,0), un = rows.filter(e=>!e.location).reduce((n,e)=>n+e.qty,0);
+  $("#homeStock").textContent = units + " item" + (units===1?"":"s") + " in stock";
+  $("#homeUnalloc").textContent = un ? un + " waiting for a location" : "Nothing to assign";
+  const nb = new Set(rows.filter(e => !e.code).map(e => e.name)).size;
+  $("#homeMatch").textContent = nb ? nb + " product" + (nb===1?"":"s") + " without a barcode" : "All items have barcodes";
+}
+$("#signin").onclick = async () => {
+  try { await token(true); authed = true; toast("Loading stock…"); await refresh(); }
+  catch(e){ toast("Sign-in failed (" + (e.message||e) + ")"); }
+};
+
+/* ---------- Locations dropdown ---------- */
+function fillLocations(){
+  const sel = $("#locSel"), keep = localStorage.getItem("lastLoc") || "", locs = loadA("locations");
+  sel.innerHTML = '<option value="">Unallocated</option>';
+  locs.forEach(l => sel.append(new Option(l, l)));
+  sel.value = locs.includes(keep) ? keep : "";
+}
+$("#locSel").onchange = e => localStorage.setItem("lastLoc", e.target.value);
+
+/* ---------- Add / Remove mode ---------- */
+$("#mAdd").onclick = () => setMode("add");
+$("#mRem").onclick = () => setMode("remove");
+function setMode(m){mode=m;$("#mAdd").classList.toggle("on",m==="add");$("#mRem").classList.toggle("on",m==="remove")}
+
+/* ---------- Stock list ---------- */
+function render(){
+  const term = $("#q").value.toLowerCase();
+  const items = rows.filter(i => (i.name+" "+i.brand+" "+i.code+" "+locName(i.location)).toLowerCase().includes(term))
+    .sort((a,b)=>a.name.localeCompare(b.name));
+  $("#list").innerHTML = items.length ? "" : '<div class="empty">No stock yet. Scan something to add it.</div>';
+  for (const i of items){
+    const soon = i.expiry && (new Date(i.expiry) - Date.now()) < 3*864e5;
+    const el = document.createElement("div"); el.className="item";
+    el.innerHTML = `<div class="n"><b></b><small></small></div>
+      <div class="qty"><button data-d="-1">−</button><b>${i.qty}</b><button data-d="1">＋</button></div>`;
+    el.querySelector("b").textContent = i.name;
+    const s = el.querySelector("small");
+    s.textContent = ["📍 " + locName(i.location), i.brand, i.expiry && "BB " + i.expiry].filter(Boolean).join(" · ");
+    if (soon) s.classList.add("soon");
+    el.querySelectorAll("[data-d]").forEach(b => b.onclick = () => adjust(i.id, +b.dataset.d));
+    $("#list").append(el);
+  }
+}
+$("#q").oninput = render;
+
+function adjust(id, d){
+  run(async () => {
+    const r = rows.find(x => x.id === id); if (!r) return;
+    const name = r.name, loc = locName(r.location), q = r.qty + d;
+    await setQty(r, q);
+    toast(q <= 0 ? `${name} used up (${loc})` : `${name}: ${q} (${loc})`);
+  });
+}
+
+/* ---------- Barcode handling ---------- */
+async function handleCode(code){
+  code = String(code).trim(); if(!code) return;
+  const loc = $("#locSel").value;
+  if (mode === "remove"){
+    const all = rows.filter(e => e.code === code).sort((a,b) => (a.expiry||"9999").localeCompare(b.expiry||"9999")); // earliest best before first
+    // prefer the selected location, then unallocated, then anywhere
+    const hit = all.find(e=>e.location===loc) || all.find(e=>!e.location) || all[0];
+    if (hit) { buzz(); adjust(hit.id, -1); } else toast("Not in stock: " + code);
+    return;
+  }
+  const ex = rows.find(e => e.code === code && e.location === loc);
+  if (ex) { buzz(); adjust(ex.id, 1); return; }
+  toast("Looking up " + code + "…");
+  openItemDialog(code, await lookup(code));
+}
+$("#go").onclick = () => { handleCode($("#manual").value); $("#manual").value=""; };
+$("#manual").onkeydown = e => { if(e.key==="Enter") $("#go").click(); };
+
+/* ---------- Lookups: your list -> Open Food Facts -> Excel product file ---------- */
+async function lookup(code){
+  const known = products[code];
+  if (known) return {name:known.name, brand:known.brand, src:"Your product list"};
+  const seen = rows.find(r => r.code === code);
+  if (seen) return {name:seen.name, brand:seen.brand, src:"Already in your list"};
+  try {
+    const r = await fetch(`https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=product_name,brands,quantity`);
+    const j = await r.json();
+    if (j.status === 1 && j.product?.product_name){
+      const p = j.product;
+      return { name: p.product_name + (p.quantity ? " " + p.quantity : ""), brand:(p.brands||"").split(",")[0], src:"Open Food Facts" };
+    }
+  } catch(e){}
+  const sp = (JSON.parse(localStorage.getItem("sp")||"{}"))[code];
+  if (sp) return {...sp, src:"SharePoint product file"};
+  return null;
+}
+
+/* ---------- Item dialog ---------- */
+let pending = null;
+function openItemDialog(code, f){
+  pending = code;
+  $("#itemTitle").textContent = code;
+  $("#itemSrc").textContent = (f ? "Found via " + f.src : "Not found – enter the details") + " · 📍 " + locName($("#locSel").value);
+  $("#fName").value = f?.name || ""; $("#fBrand").value = f?.brand || "";
+  $("#fQty").value = 1; $("#fExp").value = "";
+  $("#itemDlg").showModal();
+}
+$("#itemCancel").onclick = () => $("#itemDlg").close();
+$("#itemSave").onclick = () => {
+  const name = $("#fName").value.trim(); if(!name) return $("#fName").focus();
+  const d = { code:pending, name, brand:$("#fBrand").value.trim(), location:$("#locSel").value,
+              qty:Math.max(1, +$("#fQty").value||1), expiry:$("#fExp").value };
+  $("#itemDlg").close(); toast("Saving…");
+  run(async () => {
+    const ex = rows.find(e => e.code === d.code && e.location === d.location);
+    if (ex) await setQty(ex, ex.qty + d.qty); else await createRow(d);
+    toast("Added " + name);
+    try { await saveProduct(d.code, d.name, d.brand); } catch(e){ toast("Added, but couldn't remember the product (" + e.message + ")"); }
+  });
+};
+
+/* ---------- Assign unallocated stock ---------- */
+function renderAssign(){
+  const un = rows.filter(e => !e.location).sort((a,b)=>a.name.localeCompare(b.name));
+  const locs = loadA("locations"), box = $("#assignList");
+  box.innerHTML = "";
+  if (!un.length) { box.innerHTML = '<div class="empty">🎉 Everything has a location.</div>'; return; }
+  if (!locs.length) { box.innerHTML = '<div class="empty">No locations yet.<br>Set <code>locationsUrl</code> in CONFIG, then tap Refresh on the home screen.</div>'; return; }
+  for (const e of un){
+    const el = document.createElement("div"); el.className = "item"; el.style.flexWrap = "wrap";
+    el.innerHTML = `<div class="n" style="flex-basis:100%"><b></b><small>${e.qty} unallocated</small></div>
+      <input type="number" min="1" max="${e.qty}" value="${e.qty}" style="max-width:72px">
+      <select><option value="">Choose location…</option></select>
+      <button class="primary">Assign</button>`;
+    el.querySelector("b").textContent = e.name;
+    const sel = el.querySelector("select"); locs.forEach(l => sel.append(new Option(l, l)));
+    el.querySelector("button").onclick = () => {
+      if (!sel.value) return toast("Choose a location first");
+      const n = Math.min(e.qty, Math.max(1, +el.querySelector("input").value || 1)), loc = sel.value;
+      toast(`${n} × ${e.name} → ${loc}`);
+      run(async () => {
+        const src = rows.find(x => x.id === e.id); if (!src) return;
+        const tgt = rows.find(x => x.code === src.code && x.location === loc);
+        if (tgt) await setQty(tgt, tgt.qty + n); else await createRow({...src, location:loc, qty:n});
+        await setQty(src, src.qty - n);
+      });
+    };
+    box.append(el);
+  }
+}
+
+/* ---------- Match barcodes ---------- */
+function renderMatch(){
+  const todo = rows.filter(e => !e.code).sort((a,b)=>a.name.localeCompare(b.name)), box = $("#matchList");
+  box.innerHTML = "";
+  if (!todo.length) { box.innerHTML = '<div class="empty">🎉 Every item has a barcode.</div>'; return; }
+  for (const e of todo){
+    const el = document.createElement("div"); el.className = "item"; el.style.flexWrap = "wrap";
+    el.innerHTML = `<div class="n" style="flex-basis:100%"><b></b><small></small></div>
+      <button class="scan" style="flex:2">📷 Scan barcode</button><button>⌨️</button><button>🚫 None</button>`;
+    el.querySelector("b").textContent = e.name;
+    el.querySelector("small").textContent = e.qty + " in stock · 📍 " + locName(e.location);
+    const [scanB, typeB, noneB] = el.querySelectorAll("button");
+    scanB.onclick = () => { linkId = e.id; startScan("Scan the barcode for: " + e.name); };
+    typeB.onclick = () => { const c = (prompt("Type the barcode for " + e.name) || "").trim(); if (c) linkRow(e.id, c); };
+    noneB.onclick = () => { if (confirm("Mark '" + e.name + "' as having no barcode?")) linkRow(e.id, "NONE"); };
+    box.append(el);
+  }
+}
+function linkRow(id, code){
+  const src = rows.find(r => r.id === id); if (!src) return;
+  const name = src.name, brand = src.brand;
+  toast("Saving barcode…");
+  run(async () => {
+    // every row of the same product gets the barcode, not just this one
+    for (const r of rows.filter(x => !x.code && x.name === name)){
+      await api("PATCH", `${CONFIG.stockListBase}/items/${r.id}/fields`, {[F.code]: code}); r.code = code;
+    }
+    try { await saveProduct(code, name, brand); } catch(e){ toast("Barcode saved, but not remembered for next time (" + e.message + ")"); return; }
+    toast(code === "NONE" ? `${name}: marked as no barcode` : `${name}: barcode saved`);
+  });
+}
+
+/* ---------- Scanner ---------- */
+let stream, timer, h5, lastCode = "", lastAt = 0;
+function onDecoded(code){
+  if (linkId){ const id = linkId; linkId = null; stopScan(); buzz(); linkRow(id, String(code).trim()); return; }
+  if (code === lastCode && Date.now() - lastAt < 3000) return;
+  lastCode = code; lastAt = Date.now();
+  handleCode(code);
+  if (mode === "add" && !rows.find(e => e.code === code && e.location === $("#locSel").value)) stopScan();
+}
+async function startScan(msg){
+  $("#scanDlg").showModal();
+  $("#scanMsg").textContent = msg || "Point at a barcode…";
+  try {
+    if ("BarcodeDetector" in window){
+      $("#vid").hidden = false; $("#reader").hidden = true;
+      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+      $("#vid").srcObject = stream; await $("#vid").play();
+      const det = new BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e"]});
+      timer = setInterval(async () => {
+        try { const r = await det.detect($("#vid")); if (r.length) onDecoded(r[0].rawValue); } catch(e){}
+      }, 250);
+    } else {
+      $("#vid").hidden = true; $("#reader").hidden = false;
+      if (!window.Html5Qrcode) await loadScript("https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js");
+      h5 = new Html5Qrcode("reader");
+      await h5.start({facingMode:"environment"}, {fps:10, qrbox:{width:260,height:140}}, onDecoded);
+    }
+  } catch(e){ $("#scanMsg").textContent = "Camera unavailable – type the barcode instead."; }
+}
+function stopScan(){
+  linkId = null;
+  clearInterval(timer); timer = null;
+  stream?.getTracks().forEach(t => t.stop()); stream = null;
+  if (h5){ h5.stop().catch(()=>{}).finally(()=>{ try{h5.clear()}catch(e){} h5=null; }); }
+  if ($("#scanDlg").open) $("#scanDlg").close();
+}
+$("#scanBtn").onclick = () => startScan();
+$("#scanClose").onclick = stopScan;
+$("#scanDlg").addEventListener("cancel", stopScan);
+
+/* ---------- Locations + optional product file ---------- */
+async function syncLocations(){
+  const j = await api("GET", CONFIG.locationsUrl);
+  const names = j.value.map(x => String(x.fields?.[CONFIG.locationField] || "").trim()).filter(Boolean);
+  save("locations", [...new Set(names)].sort((a,b)=>a.localeCompare(b)));
+}
+async function syncProducts(){
+  const j = await api("GET", `${CONFIG.graphFileBase}/workbook/tables/${encodeURIComponent(CONFIG.tableName)}/range?$select=values`);
+  const [head, ...r] = j.values;
+  const col = w => head.findIndex(h => String(h).toLowerCase().includes(w));
+  const cB = col("barcode"), cN = col("name"), cBr = col("brand"), sp = {};
+  r.forEach(v => { const c = String(v[cB]||"").trim(); if(c) sp[c] = {name:String(v[cN]||""), brand: cBr>=0?String(v[cBr]||""):""}; });
+  localStorage.setItem("sp", JSON.stringify(sp));
+}
+$("#syncBtn").onclick = async () => {
+  toast("Refreshing…");
+  try { if (CONFIG.graphFileBase && CONFIG.tableName) await syncProducts(); } catch(e){ toast("Product file failed (" + e.message + ")"); return; }
+  await refresh(); toast("Up to date");
+};
+
+/* ---------- Export ---------- */
+$("#exportBtn").onclick = () => {
+  const out = [["Barcode","Name","Brand","Location","Qty","Best before"],
+    ...rows.map(i=>[i.code,i.name,i.brand,locName(i.location),i.qty,i.expiry])];
+  const csv = out.map(r=>r.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"})); a.download = "pantry.csv"; a.click();
+};
+
+/* ---------- Boot ---------- */
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+(async () => {
+  route();
+  if (!CONFIG.msalClientId || !CONFIG.stockListBase) return;
+  try { await token(false); authed = true; await refresh(); } catch(e){ route(); }
+})();
+document.addEventListener("visibilitychange", () => { if (!document.hidden && authed) refresh(); });
+</script>
+</body>
+</html>
